@@ -5,6 +5,7 @@ if (!defined('ABSPATH')) {
 if (!defined('__DIR__')) {
     define('__DIR__', dirname(__FILE__));
 }
+require_once(WC()->plugin_path() . '/includes/admin/wc-admin-functions.php');
 include_once(__DIR__ . "/payu.cls.php");
 
 /**
@@ -14,14 +15,19 @@ include_once(__DIR__ . "/payu.cls.php");
  *
  * @class          WC_PayU
  * @extends        WC_Gateway_PayU
- * @version        1.0.0
+ * @version        1.1.0
  * @package        WooCommerce/Classes/Payment
  * @author         WooThemes
  */
 class WC_Gateway_PayU extends WC_Payment_Gateway
 {
 
-    var $notify_url;
+    /**
+     * Constant for payment status page name in DB
+     */
+    const STATUS_PAGE_NAME = 'payu-payment-result';
+
+    var $notify_url, $status_page_id;
 
     /**
      * Constructor for the gateway.
@@ -41,6 +47,7 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
         // Load the settings.
         $this->init_form_fields();
         $this->init_settings();
+        $this->init_pstatus_page();
 
         // Define user set variables
 
@@ -286,13 +293,16 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
         $OrderArray = array_merge($billing, $delivery);
 
 
-        if ($this->get_option("backref") !== "" && $this->get_option("backref") !== "no") {
+        /*if ($this->get_option("backref") !== "" && $this->get_option("backref") !== "no") {
             $OrderArray['BACK_REF'] = $this->get_option("backref");
         } else {
             $protocolPref           = $_SERVER['HTTPS'] ? 'https://' : 'http://';
             $OrderArray['BACK_REF'] = $protocolPref . $_SERVER['HTTP_HOST'];
-        }
+        }*/
 
+        if ($this->status_page_id) {
+            $OrderArray['BACK_REF'] = get_post_permalink($this->status_page_id);
+        }
 
         // Discount not used
         # $payu_args['discount_amount_cart'] = $order->get_order_discount();
@@ -524,7 +534,7 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
      *
      * @param mixed $posted
      *
-     * @return void
+     * @return WC_Order
      */
     function get_payu_order($posted) {
         $order_id = $_POST['REFNOEXT'];
@@ -533,6 +543,21 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
         return $order;
     }
 
+
+    /**
+     * Initiates creating payment status page
+     *
+     * @access private
+     *
+     * @return void
+     */
+    private function init_pstatus_page() {
+        $post_name            = esc_sql(self::STATUS_PAGE_NAME);
+        $post_title           = esc_sql('Страница результатов оплаты (PayU)');
+        $page_content         = '';
+        $option               = 'payu_payment_status_page';
+        $this->status_page_id = wc_create_page($post_name, $option, $post_title, $page_content);
+    }
 }
 
 
