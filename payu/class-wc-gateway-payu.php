@@ -7,7 +7,6 @@ if (!defined('__DIR__')) {
 }
 require_once(WC()->plugin_path() . '/includes/admin/wc-admin-functions.php');
 include_once(__DIR__ . "/payu.cls.php");
-include_once(__DIR__ . "/class-wc-payu-shortcodes.php");
 
 /**
  * PayU Payment Gateway
