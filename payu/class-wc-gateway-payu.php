@@ -7,6 +7,7 @@ if (!defined('__DIR__')) {
 }
 require_once(WC()->plugin_path() . '/includes/admin/wc-admin-functions.php');
 include_once(__DIR__ . "/payu.cls.php");
+include_once(__DIR__ . "/class-wc-payu-shortcodes.php");
 
 /**
  * PayU Payment Gateway
@@ -25,7 +26,8 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
     /**
      * Constant for payment status page name in DB
      */
-    const STATUS_PAGE_NAME = 'payu-payment-result';
+    const STATUS_PAGE_NAME = 'payu-payment-result',
+          STATUS_PAGE_SHORTCODE = 'payu_payment_result';
 
     var $notify_url, $status_page_id;
 
@@ -47,7 +49,7 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
         // Load the settings.
         $this->init_form_fields();
         $this->init_settings();
-        $this->init_pstatus_page();
+        
 
         // Define user set variables
 
@@ -75,6 +77,7 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
                                                      'receipt_page'));
         add_action('woocommerce_update_options_payment_gateways_' . $this->id, array($this,
                                                                                      'process_admin_options'));
+        add_action( 'payu_init_shortcode', array( 'WC_Payu_Shortcodes', 'init' ) );
 
         // Payment listener/API hook
         add_action('woocommerce_api_wc_gateway_payu', array($this,
@@ -83,6 +86,8 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
         if (!$this->is_valid_for_use()) {
             $this->enabled = false;
         }
+
+        $this->init_pstatus_page();
     }
 
 
@@ -292,24 +297,6 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
 
         $OrderArray = array_merge($billing, $delivery);
 
-
-        /*if ($this->get_option("backref") !== "" && $this->get_option("backref") !== "no") {
-            $OrderArray['BACK_REF'] = $this->get_option("backref");
-        } else {
-            $protocolPref           = $_SERVER['HTTPS'] ? 'https://' : 'http://';
-            $OrderArray['BACK_REF'] = $protocolPref . $_SERVER['HTTP_HOST'];
-        }*/
-
-        if ($this->status_page_id) {
-            $OrderArray['BACK_REF'] = get_post_permalink($this->status_page_id);
-        }
-
-        // Discount not used
-        # $payu_args['discount_amount_cart'] = $order->get_order_discount();
-
-
-        $item_names = array();
-
         if (sizeof($order->get_items()) > 0) {
             foreach ($order->get_items() as $item) {
                 $OrderArray['ORDER_PNAME'][] = $item['name']; # Array with data of goods
@@ -321,6 +308,12 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
         }
 
         $OrderArray['DISCOUNT'] = $order->get_total_discount();
+        
+        if ($this->status_page_id) {
+            $OrderArray['BACK_REF'] = get_post_permalink($this->status_page_id);
+            $OrderArray['BACK_REF'] .= preg_match('~^/?~',$OrderArray['BACK_REF']) > 0 ? '&orderid=' : '?orderid=';
+            $OrderArray['BACK_REF'] .= $OrderArray['ORDER_REF'];
+        }
 
         $payu_args['Payu_data'] = $OrderArray;
         $payu_args              = apply_filters('woocommerce_payu_args', $payu_args);
@@ -537,7 +530,7 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
      * @return WC_Order
      */
     function get_payu_order($posted) {
-        $order_id = $_POST['REFNOEXT'];
+        $order_id = $_POST['REFNOEXT'] ? $_POST['REFNOEXT'] : $posted;
         $order    = new WC_Order($order_id);
 
         return $order;
@@ -552,11 +545,72 @@ class WC_Gateway_PayU extends WC_Payment_Gateway
      * @return void
      */
     private function init_pstatus_page() {
-        $post_name            = esc_sql(self::STATUS_PAGE_NAME);
-        $post_title           = esc_sql('Страница результатов оплаты (PayU)');
-        $page_content         = '';
-        $option               = 'payu_payment_status_page';
+        $post_name  = esc_sql(self::STATUS_PAGE_NAME);
+        $post_title = esc_sql('Страница результатов оплаты (PayU)');
+        $page_content         = '[' . apply_filters(self::STATUS_PAGE_SHORTCODE . '_shortcode_tag', self::STATUS_PAGE_SHORTCODE) . ']';
+        $option               = 'payu_payment_status';
         $this->status_page_id = wc_create_page($post_name, $option, $post_title, $page_content);
+    }
+
+
+    /**
+     * Inits function for status page shortcode
+     * 
+     * @access public
+     * 
+     * @return string
+     */
+    public static function payment_result_template() {
+        return \WC_Shortcodes::shortcode_wrapper(array(__CLASS__, 'payment_result_function'));
+    }
+
+    /**
+     * Template function for payu payment result page
+     *
+     * @access public
+     *
+     * @return string
+     */
+    public static function payment_result_function() {
+
+        if (empty($_GET['orderid'])) {
+
+            echo '<div class="woocommerce-info">';
+            echo 'Заказ не найден';
+            echo '</div>';
+
+        } else {
+
+            $order = new WC_Order($_GET['orderid']);
+
+            switch ($_GET['result']) {
+                case 0: {
+                    $order->update_status('processing');
+                    $message = 'Ваш заказ успешно оплачен и переведён в обработку';
+                }
+                    break;
+
+                case -1: {
+                    $message = 'Счет на оплату был выставлен, но не оплачен. Пожалуйста, повторите оплату';
+                }
+                    break;
+
+                default: {
+                    $message = 'Произошла ошибка платежа. Пожалуйста повторите попытку';
+                }
+
+            }
+
+            if ($_GET['result'] == 0) {
+                $order->update_status('processing');
+            }
+
+            echo '<div class="woocommerce-info">';
+            echo 'Заказ №'.$_GET['orderid'];
+            echo '<br>'.$message;
+            echo '</div>';
+        }
+
     }
 }
 
